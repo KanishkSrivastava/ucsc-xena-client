@@ -33,22 +33,18 @@ var zoom = {
 // Direction - either h for gene/horizontal zoom or v for samples/vertical zoom
 //
 
-var directionFromStartEnd = (start, end) => Math.abs(start.x - end.x) > Math.abs(start.y - end.y) ? 'h' : 'v';
+var direction = (start, end) => Math.abs(start.x - end.x) > Math.abs(start.y - end.y) ? 'h' : 'v';
 
-var directionInColumnWithGeneModel = ({start, end, zone}) => zone === 'a' ? 'h' : directionFromStartEnd(start, end);
+var directionWithGeneModel = ({start, end, zone}) => zone === 'a' ? 'h' : direction(start, end);
 
-var directionInColumnWithoutGeneModel = ({start, end}) => directionFromStartEnd(start, end);
+var directionWithoutGeneModel = ({start, end}) => direction(start, end);
 
-var directionSampleZoomOnlyColumn = () => 'v';
+var directionSamplesOnly = () => 'v';
 
 // @param {fieldType, start, end, zone}
-zoom.direction.add('geneProbes', directionInColumnWithGeneModel);
-zoom.direction.add('segmented', directionInColumnWithGeneModel);
-zoom.direction.add('mutation', directionInColumnWithGeneModel);
-zoom.direction.add('probes', directionInColumnWithGeneModel);
-zoom.direction.add('genes', directionInColumnWithoutGeneModel);
-zoom.direction.add('SV', directionInColumnWithGeneModel);
-zoom.direction.add('clinical', directionSampleZoomOnlyColumn);
+zoom.direction.dflt = directionWithGeneModel;
+zoom.direction.add('genes', directionWithoutGeneModel);
+zoom.direction.add('clinical', directionSamplesOnly);
 
 //
 // Start and end pixel values - use x start and end values for gene/horizontal zoom, use y start and end values for
@@ -84,7 +80,7 @@ var subcolumnWidth = (columnWidth, subcolumns) => {
 };
 
 // Return pixel x coordinates for the specified subcolumn index
-var subcolumnIndexToStartEndPx = ({layout, position}, i) => {
+var subcolumnToPx = ({layout, position}, i) => {
 	var {pxLen} = layout,
 		width = subcolumnWidth(pxLen, position),
 		start = width * i,
@@ -103,7 +99,7 @@ var overlapSubcolumnIndices = (column, chromRange) => {
 };
 
 // Calculate subcolumn start and end pixel points from the specified annotation start and end pixel points.
-var annotationStartEndPxToSamplesStartEndPx = (column, startPx, endPx) => {
+var annotationPxToSamplesPx = (column, startPx, endPx) => {
 	var {layout} = column,
 		chromRange = chromRangeFromScreen(layout, startPx, endPx),
 		overlaps = overlapSubcolumnIndices(column, chromRange),
@@ -111,26 +107,26 @@ var annotationStartEndPxToSamplesStartEndPx = (column, startPx, endPx) => {
 		if ( overlaps.length ) {
 			var minIndex = _.min(overlaps),
 				maxIndex = _.max(overlaps);
-			start = subcolumnIndexToStartEndPx(column, minIndex).start;
-			end = subcolumnIndexToStartEndPx(column, maxIndex).end;
+			start = subcolumnToPx(column, minIndex).start;
+			end = subcolumnToPx(column, maxIndex).end;
 		}
 	return {start, end};
 };
 
 // Calculate index of subcolumn from the specified pixel point within samples area.
-var samplesPxToSubcolumnIndex = (columnWidth, subcolumns, px) => {
+var samplesPxToSubcolumn = (columnWidth, subcolumns, px) => {
 	return Math.floor(px / subcolumnWidth(columnWidth, subcolumns));
 };
 
 // Calculate the indicator start and end points in annotation, from the samples start and end points.
-var samplesStartEndPxToAnnotationStartEndPx = (column, direction, start, end) => {
+var samplesPxToAnnotationPx = (column, direction, start, end) => {
 	var {layout, position} = column,
 		istart = null, iend = null;
 	if ( direction === 'h' ) {
 		// Find start and end subcolumns from pixel points
 		var {baseLen, pxLen, reversed, zoom} = layout,
-			startIndex = samplesPxToSubcolumnIndex(pxLen, position, start),
-			endIndex = samplesPxToSubcolumnIndex(pxLen, position, end),
+			startIndex = samplesPxToSubcolumn(pxLen, position, start),
+			endIndex = samplesPxToSubcolumn(pxLen, position, end),
 			// Grab set of selected subcolumns
 			selectedPos = position.slice(startIndex, endIndex + 1),
 			// Find the min and max chroms within the selected set of subcolumns
@@ -154,31 +150,26 @@ var samplesStartEndPxToAnnotationStartEndPx = (column, direction, start, end) =>
 	return {istart, iend};
 };
 
-var overlayFromAnnotationZone = ({column, start, end}) => {
-	var sStartEnd = annotationStartEndPxToSamplesStartEndPx(column, start, end);
+var overlayFromAnnotation = ({column, start, end}) => {
+	var sStartEnd = annotationPxToSamplesPx(column, start, end);
 	return {sstart: sStartEnd.start, send: sStartEnd.end, istart: start, iend: end};
 };
 
 // Calculate start and end points for zoom in samples area in column with subcolumns
-var overlayFromSamplesZone = ({annotated, column, direction, start, end}) =>
+var overlayFromSamples = ({annotated, column, direction, start, end}) =>
 	annotated ?
-		({sstart: start, send: end, ...samplesStartEndPxToAnnotationStartEndPx(column, direction, start, end)}) :
+		({sstart: start, send: end, ...samplesPxToAnnotationPx(column, direction, start, end)}) :
 		({sstart: start, send: end, istart: start, iend: end});
 
 var overlayWithSubcolumns = (params) =>
-	params.zone === 'a' ? overlayFromAnnotationZone(params) : overlayFromSamplesZone(params);
+	params.zone === 'a' ? overlayFromAnnotation(params) : overlayFromSamples(params);
 
 var overlayWithoutSubcolumns = ({start, end}) => ({sstart: start, send: end, istart: start, iend: end});
 
 // @param {annotated, column, direction, fieldType, start, end, zone}
 // -- start and end are pixel points in the target zone where the drag zoom event occurred (either samples or annotation)
+zoom.overlay.dflt = overlayWithoutSubcolumns;
 zoom.overlay.add('geneProbes', overlayWithSubcolumns);
-zoom.overlay.add('segmented', overlayWithoutSubcolumns);
-zoom.overlay.add('mutation', overlayWithoutSubcolumns);
-zoom.overlay.add('probes', overlayWithoutSubcolumns);
-zoom.overlay.add('genes', overlayWithoutSubcolumns);
-zoom.overlay.add('SV', overlayWithoutSubcolumns);
-zoom.overlay.add('clinical', overlayWithoutSubcolumns);
 
 //
 // Zoom - gene/horizontal zoom requires chromstart/chromend values for columns with corresponding gene model or subcolumn
@@ -197,8 +188,8 @@ var geneZoomWithoutGeneModel = (params) => {
 		zEnd = xzoom ? xzoom.end : maxXZoom.end,
 		// Use fieldList here for genes/probes as zoom indices are always relative to the complete (max zoom) set of fields
 		fieldsInZoomRange = fieldType === 'geneProbes' ? fields : fieldList.slice(zStart, zEnd + 1),
-		start = zStart + samplesPxToSubcolumnIndex(width, fieldsInZoomRange, sstart),
-		end = zStart + samplesPxToSubcolumnIndex(width, fieldsInZoomRange, send);
+		start = zStart + samplesPxToSubcolumn(width, fieldsInZoomRange, sstart),
+		end = zStart + samplesPxToSubcolumn(width, fieldsInZoomRange, send);
 	return {start, end};
 };
 
@@ -220,12 +211,7 @@ var zoomByDirection = (params) =>
 // -- sstart and ssend are pixel points in the samples zone
 // -- istart and iend are pixel points in the annotation (indicator) zone
 // -- yZoom is the current samples/vertical zoom state
-zoom.zoomTo.add('geneProbes', zoomByDirection);
-zoom.zoomTo.add('segmented', zoomByDirection);
-zoom.zoomTo.add('mutation', zoomByDirection);
-zoom.zoomTo.add('probes', zoomByDirection);
-zoom.zoomTo.add('genes', zoomByDirection);
-zoom.zoomTo.add('SV', zoomByDirection);
+zoom.zoomTo.dflt = zoomByDirection;
 zoom.zoomTo.add('clinical', samplesZoom);
 
 //
@@ -237,13 +223,10 @@ var maxGeneZoomRange = (column) => _.get(column.maxXZoom, ['end']) - _.get(colum
 // x zoom is indices for columns without corresponding gene model, add 1 to get length
 var maxGeneZoomRangeByIndices = (column) => maxGeneZoomRange(column) + 1;
 
-zoom.maxGeneZoomLength.add('geneProbes', maxGeneZoomRange);
-zoom.maxGeneZoomLength.add('segmented', maxGeneZoomRange);
-zoom.maxGeneZoomLength.add('mutation', maxGeneZoomRange);
-zoom.maxGeneZoomLength.add('probes', maxGeneZoomRangeByIndices);
-zoom.maxGeneZoomLength.add('genes', maxGeneZoomRangeByIndices);
-zoom.maxGeneZoomLength.add('SV', maxGeneZoomRange);
-zoom.maxGeneZoomLength.add('clinical', maxGeneZoomRange);
+zoom.maxGeneZoomLength.dflt = maxGeneZoomRange;
+['probes', 'genes'].forEach(fieldType => {
+	zoom.maxGeneZoomLength.add(fieldType, maxGeneZoomRangeByIndices);
+});
 
 //
 // Calculate current gene zoom length
@@ -254,13 +237,10 @@ var geneZoomRange = (column) => _.get(column.xzoom, ['end']) - _.get(column.xzoo
 // x zoom is indices for columns without corresponding gene model, add 1 to get length
 var geneZoomRangeByIndices = (column) => geneZoomRange(column) + 1;
 
-zoom.geneZoomLength.add('geneProbes', geneZoomRange);
-zoom.geneZoomLength.add('segmented', geneZoomRange);
-zoom.geneZoomLength.add('mutation', geneZoomRange);
-zoom.geneZoomLength.add('probes', geneZoomRangeByIndices);
-zoom.geneZoomLength.add('genes', geneZoomRangeByIndices);
-zoom.geneZoomLength.add('SV', geneZoomRange);
-zoom.geneZoomLength.add('clinical', geneZoomRange);
+zoom.geneZoomLength.dflt = geneZoomRange;
+['probes', 'genes'].forEach(fieldType => {
+	zoom.geneZoomLength.add(fieldType, geneZoomRangeByIndices);
+});
 
 //
 // Calculate length of zoom to
@@ -271,28 +251,20 @@ var zoomToLength = ({zoomTo}) => _.get(zoomTo, ['end']) - _.get(zoomTo, ['start'
 // x zoom is indices for columns without corresponding gene model, add 1 to get length
 var zoomToLengthByIndices = (params) => zoomToLength(params) + 1;
 
-zoom.zoomToLength.add('geneProbes', zoomToLength);
-zoom.zoomToLength.add('segmented', zoomToLength);
-zoom.zoomToLength.add('mutation', zoomToLength);
-zoom.zoomToLength.add('probes', zoomToLengthByIndices);
-zoom.zoomToLength.add('genes', zoomToLengthByIndices);
-zoom.zoomToLength.add('SV', zoomToLength);
-zoom.zoomToLength.add('clinical', zoomToLength);
+zoom.zoomToLength.dflt = zoomToLength;
+['probes', 'genes'].forEach(fieldType => {
+	zoom.zoomToLength.add(fieldType, zoomToLengthByIndices);
+});
 
 //
 // True if gene/horizontal zoom is possible for column type
 //
 
 var geneZoomSupported = () => true;
-var geneZoomNotSupported = () => false;
+var geneZoomUnsupported = () => false;
 
-zoom.supportsGeneZoom.add('geneProbes', geneZoomSupported);
-zoom.supportsGeneZoom.add('segmented', geneZoomSupported);
-zoom.supportsGeneZoom.add('mutation', geneZoomSupported);
-zoom.supportsGeneZoom.add('probes', geneZoomSupported);
-zoom.supportsGeneZoom.add('genes', geneZoomSupported);
-zoom.supportsGeneZoom.add('SV', geneZoomSupported);
-zoom.supportsGeneZoom.add('clinical', geneZoomNotSupported);
+zoom.supportsGeneZoom.dflt = geneZoomSupported;
+zoom.supportsGeneZoom.add('clinical', geneZoomUnsupported);
 
 //
 // True if there is currently a gene zoom for the column
